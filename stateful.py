@@ -1,4 +1,5 @@
 import random
+import time
 from tqdm import tqdm
 from copy import deepcopy
 
@@ -16,16 +17,23 @@ class State:
         self.done = done
 
     def draw(self, n):
-        ##TODO THIS IS EXTREMELY WRONG
-        random.shuffle(self.decks[0])
-        random.shuffle(self.decks[1])
+        decks = [random.sample(self.decks[0],len(self.decks[0])), random.sample(self.decks[1],len(self.decks[1]))]
+        hands = [decks[0][:n], decks[1][:n]]
+        decks = [decks[0][n:], decks[1][n:]]
 
-        self.hands[0].append(self.decks[0][n])
-        self.hands[1].append(self.decks[1][n])
+        return State(
+            decks,
+            hands,
+            self.plays,
+            self.to_play,
+            self.rd,
+            self.done)
 
-
-    def valid_moves(self):
+    def valid_moves(self, hidden = False):
         if(self.done[self.to_play]):
+            return [-1]
+        #cap out cards at 5 if simming hidden state with a big hand
+        if(sum([len(rd) for rd in self.plays[self.to_play]]) > 4):
             return [-1]
         return [-1] + list(range(len(self.hands[self.to_play])))
 
@@ -110,8 +118,8 @@ class State:
         return(out)
 
 class Node:
-    def __init__(self, move, parent, played):
-        self.move, self.parent, self.played, self.children = move, parent, played, []
+    def __init__(self, move, parent, player):
+        self.move, self.parent, self.player, self.children = move, parent, player, []
         self.wins, self.visits = 0, 0
 
     def expand(self, state):
@@ -122,17 +130,27 @@ class Node:
 
     def update(self, winner):
         self.visits += 1
-        if winner > 0 and self.played == 1:
+        if winner > 0 and self.player == 0:
             self.wins += 1
-        elif winner < 0 and self.played == 0:
+        elif winner < 0 and self.player == 1:
             self.wins += 1
         elif winner == 0:
             self.wins += 0.5
 
-def montesearch(state, i = 1000):
-    root = Node(None, None, [1,0][state.to_play])
-    for i in range(i):
-        n, s = root, deepcopy(state)
+def montesearch(state, t = 5, hidden_opponent = True):
+    root = Node(None, None, state.to_play)
+    root_state = deepcopy(state)
+
+    if hidden_opponent:
+        root_state.hands[[1,0][root.player]] += root_state.decks[[1,0][root.player]]
+        root_state.decks[[1,0][root.player]] = []
+
+    print("EVALUATING:")
+    print(root_state.visualize())
+
+    start = time.time()
+    while time.time() - start < t:
+        n, s = root, deepcopy(root_state)
         while not len(n.children) == 0:
             n = random.choice(n.children) #do better
             s = s.after_move(n.move)
@@ -150,6 +168,7 @@ def montesearch(state, i = 1000):
             n.update(r)
             n = n.parent
 
+    print([(node.wins, node.visits, node.move) for node in root.children])
     return list(filter(lambda n: n.wins == max([node.wins for node in root.children]), root.children))[0].move
 
 
@@ -157,15 +176,15 @@ def montesearch(state, i = 1000):
 #winrates
 player1 = 0
 player2 = 0
-for i in tqdm(range(1,1001)):
-    state = State([list(range(3,10)),list(range(3,10))], [[],[]], [[[],[],[]],[[],[],[]]], 0, 0, [False, False])
+for i in tqdm(range(1,2)):
+    state = State([list(range(1,8)),list(range(1,8))], [[],[]], [[[],[],[]],[[],[],[]]], 0, 0, [False, False])
     state = state.draw(5)
     while not state.game_over():
-        #print("-"*20)
-        move = montesearch(state)
-        #print("player", str(state.to_play) + " playing " + (["skip"] + [State.val_chars[card] for card in state.hands[state.to_play]])[move + 1])
+        print("-"*20)
+        move = montesearch(state, 0.5)
+        print("player", str(state.to_play) + " playing " + (["skip"] + [State.val_chars[card] for card in state.hands[state.to_play]])[move + 1])
         state = state.after_move(move)
-        #print(state.visualize())
+        print(state.visualize())
     winner = state.eval_game()
     if winner > 0:
         player1 += 1
@@ -175,4 +194,3 @@ for i in tqdm(range(1,1001)):
     print("player1:" + str(player1/i))
     print("player2:" + str(player2/i))
 
-print(state.eval_game())
