@@ -1,4 +1,5 @@
 import random
+import math
 import time
 from tqdm import tqdm
 from copy import deepcopy
@@ -29,13 +30,27 @@ class State:
             self.rd,
             self.done)
 
-    def valid_moves(self, hidden = False):
+    def valid_moves(self):
         if(self.done[self.to_play]):
             return [-1]
         #cap out cards at 5 if simming hidden state with a big hand
         if(sum([len(rd) for rd in self.plays[self.to_play]]) > 4):
             return [-1]
         return [-1] + list(range(len(self.hands[self.to_play])))
+
+    def heuristic_moves(self):
+        if self.done[[1,0][self.to_play]]:
+           rd_winner = self.eval_round(self.rd)
+           if self.to_play == 0 and rd_winner > 1:
+               return [-1]
+           elif self.to_play == 1 and rd_winner < 0:
+               return [-1]
+
+        if self.rd == 2:
+            return self.valid_moves()[1:]
+
+        return []
+
 
 
     def game_over(self):
@@ -130,20 +145,35 @@ class Node:
 
     def update(self, winner):
         self.visits += 1
-        if winner > 0 and self.player == 0:
+        if winner > 0 and self.player == 1:
             self.wins += 1
-        elif winner < 0 and self.player == 1:
+        elif winner < 0 and self.player == 0:
             self.wins += 1
         elif winner == 0:
             self.wins += 0.5
 
-def montesearch(state, t = 5, hidden_opponent = True):
+def montesearch(state, t = 5, hidden_opponent = True, unseen = 100):
+
+    def uct(node, c = math.sqrt(2)):
+        if node.visits == 0: return unseen
+        exploitation = node.wins / node.visits
+        exploration = 0 if node.parent.visits < 1 else c * math.sqrt(math.log(node.parent.visits) / node.visits) 
+        return exploitation + exploration
+
+    def fitness(node):
+        return node.visits
+        return 0 if node.visits == 0 else node.wins/node.visits
+
     root = Node(None, None, state.to_play)
     root_state = deepcopy(state)
+
 
     if hidden_opponent:
         root_state.hands[[1,0][root.player]] += root_state.decks[[1,0][root.player]]
         root_state.decks[[1,0][root.player]] = []
+
+    if len(root_state.valid_moves()) == 1:
+        return root_state.valid_moves()[0]
 
     print("EVALUATING:")
     print(root_state.visualize())
@@ -152,25 +182,30 @@ def montesearch(state, t = 5, hidden_opponent = True):
     while time.time() - start < t:
         n, s = root, deepcopy(root_state)
         while not len(n.children) == 0:
-            n = random.choice(n.children) #do better
+            max_uct = max([uct(node) for node in n.children])
+            n = [n for n in n.children if uct(n) == max_uct][0]
             s = s.after_move(n.move)
 
         n.expand(s)
-        if(len(n.children) == 0):
-            continue
-        n = random.choice(n.children)
+        if(len(n.children) > 0):
+            n = random.choice(n.children)
         
         while not s.game_over():
-            s = s.after_move(random.choice(s.valid_moves()))
+            moves = s.heuristic_moves()
+            if len(moves) == 0:
+                moves = s.valid_moves()
+
+            s = s.after_move(random.choice(moves))
 
         r = s.eval_game()
         while not n.parent == None:
             n.update(r)
             n = n.parent
+        n.update(r)
 
     print([(node.wins, node.visits, node.move) for node in root.children])
-    return list(filter(lambda n: n.wins == max([node.wins for node in root.children]), root.children))[0].move
-
+    print((root.wins, root.visits))
+    return list(filter(lambda n: fitness(n) == max([fitness(node) for node in root.children]), root.children))[0].move
 
 
 #winrates
@@ -181,7 +216,7 @@ for i in tqdm(range(1,2)):
     state = state.draw(5)
     while not state.game_over():
         print("-"*20)
-        move = montesearch(state, 0.5)
+        move = montesearch(state, 10)
         print("player", str(state.to_play) + " playing " + (["skip"] + [State.val_chars[card] for card in state.hands[state.to_play]])[move + 1])
         state = state.after_move(move)
         print(state.visualize())
